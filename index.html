@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Food Delivery Assistant · A* + Bayes + MDP</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e1db;
+    --road: #fbfaf7; --alley: #e9e3d6; --bldg: #3a3a40;
+    --route: #2f6fed; --final: #0f9d6b; --alert: #e0443c; --explored: #dbe7ff;
+    --accent: #2f6fed;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { padding: 18px 28px 6px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+  header .tag { color: var(--muted); }
+  .pipeline { display: flex; gap: 6px; align-items: center; padding: 0 28px 14px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+  .pipeline b { color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 3px 9px; border-radius: 99px; font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(340px, 440px) 1fr; gap: 18px; padding: 0 28px 28px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .card h2 .n { background: var(--ink); color: #fff; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; }
+  .left { display: flex; flex-direction: column; gap: 14px; }
+  .right { display: flex; flex-direction: column; gap: 14px; }
+
+  /* grid */
+  #grid { display: grid; gap: 4px; user-select: none; }
+  .cell { aspect-ratio: 1; border-radius: 8px; position: relative; display: grid; place-items: center;
+          font-weight: 700; font-size: 18px; cursor: pointer; transition: transform .08s, background .2s; border: 1px solid var(--line); }
+  .cell:hover { transform: scale(1.04); }
+  .cell.road { background: var(--road); }
+  .cell.alley { background: repeating-linear-gradient(45deg, var(--alley), var(--alley) 5px, #e2dbcc 5px, #e2dbcc 10px); }
+  .cell.bldg { background: var(--bldg); border-color: var(--bldg); }
+  .cell.explored::before { content: ""; position: absolute; inset: 0; border-radius: 7px; background: var(--explored); opacity: .75; }
+  .cell .ord { position: absolute; top: 3px; left: 5px; font-size: 10px; color: #5b7fd6; font-weight: 600; }
+  .cell .dot { position: absolute; width: 34%; height: 34%; border-radius: 50%; }
+  .cell.route .dot { background: var(--route); opacity: .35; }
+  .cell.final .dot { background: var(--final); opacity: 1; width: 40%; height: 40%; }
+  .cell.alertcell { outline: 3px solid var(--alert); outline-offset: -3px; }
+  .cell.alertcell.avoided::after { content: "✕"; color: var(--alert); font-size: 26px; position: absolute; }
+  .cell.alertcell:not(.avoided)::after { content: "!"; color: var(--alert); font-size: 22px; position: absolute; }
+  .cell .lbl { position: relative; z-index: 1; font-size: 20px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; border: 1px solid var(--line); }
+
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tools button, .btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 10px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+  .tools button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+  .ctl { display: grid; grid-template-columns: 1fr 64px; gap: 4px 10px; align-items: center; margin: 8px 0; }
+  .ctl label { font-size: 13px; }
+  .ctl output { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ctl input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .switch { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #fff3f2; border: 1px solid #f6d2cf; cursor: pointer; font-weight: 600; }
+  .switch.offs { background: #f3f6f4; border-color: var(--line); }
+  .switch input { width: 18px; height: 18px; accent-color: var(--alert); }
+
+  /* decision banner */
+  #banner { border-radius: 14px; padding: 18px 20px; color: #fff; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  #banner.reroute { background: linear-gradient(120deg, #0f9d6b, #0b7a54); }
+  #banner.continue { background: linear-gradient(120deg, #2f6fed, #2456c0); }
+  #banner.error { background: #8a8a90; }
+  #banner .big { font-size: 28px; font-weight: 800; letter-spacing: -.01em; }
+  #banner .sub { opacity: .9; }
+  #banner .stats { display: flex; gap: 22px; }
+  #banner .stats div { text-align: right; }
+  #banner .stats b { display: block; font-size: 20px; }
+
+  .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .kv div { background: #f8f7f4; border-radius: 10px; padding: 10px 12px; }
+  .kv b { display: block; font-size: 20px; }
+  .kv span { color: var(--muted); font-size: 12px; }
+  .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: #f8f7f4; border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.7; overflow-x: auto; }
+  .bars { margin-top: 10px; }
+  .bar { display: grid; grid-template-columns: 90px 1fr 52px; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
+  .bar .track { height: 12px; background: #eeece7; border-radius: 99px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 99px; transition: width .4s; }
+  .bar output { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  tr.best td { font-weight: 700; }
+  td.win { color: var(--final); font-weight: 800; }
+  .thresh { position: relative; height: 26px; margin: 16px 0 4px; }
+  .thresh .zone { position: absolute; top: 8px; height: 10px; border-radius: 99px; }
+  .thresh .mark { position: absolute; top: 0; width: 3px; height: 26px; background: var(--ink); border-radius: 2px; transition: left .4s; }
+  .thresh .mark span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .thresh-l { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .note { margin-top: 8px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛵 Food Delivery Assistant</h1>
+  <span class="tag">AI Fundamentals Final Project · team self1sh</span>
+</header>
+<div class="pipeline">
+  <b>1 · A* route</b> → traffic alert on route → <b>2 · Bayes P(blocked)</b> → <b>3 · MDP decision</b> → if Reroute → <b>A* detour</b>
+</div>
+
+<main>
+  <section class="left">
+    <div class="card">
+      <h2>City map</h2>
+      <div id="grid"></div>
+      <div class="legend">
+        <span><i style="background:var(--road)"></i>road · 1 min</span>
+        <span><i style="background:var(--alley)"></i>alley · 3 min</span>
+        <span><i style="background:var(--bldg)"></i>building</span>
+        <span><i style="background:var(--explored)"></i>A* explored</span>
+        <span><i style="background:var(--route);opacity:.4"></i>first route</span>
+        <span><i style="background:var(--final)"></i>final route</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Edit the map</h2>
+      <div class="tools" id="tools">
+        <button data-t="sensor" class="on">📡 Sensor</button>
+        <button data-t=".">Road</button>
+        <button data-t="~">Alley</button>
+        <button data-t="#">Building</button>
+        <button data-t="S">🍔 Restaurant</button>
+        <button data-t="C">🏠 Customer</button>
+      </div>
+      <div class="hint">📡 Sensor: click a cell on the route to move the traffic sensor there. Other tools repaint cells and A* re-plans instantly.</div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="animate">▶ Animate A* search</button>
+        <button class="btn" id="reset">↺ Reset map</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Scenarios</h2>
+      <div class="row">
+        <button class="btn primary" data-s="rush">Rush hour + alert</button>
+        <button class="btn" data-s="quiet">No alert</button>
+        <button class="btn" data-s="night">Night + alert</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="right">
+    <div id="banner"></div>
+
+    <div class="card">
+      <h2><span class="n">1</span>A* search — fastest route</h2>
+      <div class="kv">
+        <div><b id="a-cost">–</b><span>minutes (route cost)</span></div>
+        <div><b id="a-moves">–</b><span>moves</span></div>
+        <div><b id="a-exp">–</b><span>nodes expanded</span></div>
+      </div>
+      <div class="formula" id="a-f"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="n">2</span>Bayesian inference — is the road blocked?</h2>
+      <label class="switch" id="sw"><input type="checkbox" id="alert" checked> <span id="swtxt">Traffic alert received from the sensor</span></label>
+      <div class="ctl"><label>Prior P(blocked) — how often roads jam</label><output id="o-prior"></output><input type="range" id="prior" min="0.01" max="0.6" step="0.01"></div>
+      <div class="ctl"><label>Sensor sensitivity P(alert | blocked)</label><output id="o-pab"></output><input type="range" id="p_a_b" min="0.5" max="0.99" step="0.01"></div>
+      <div class="ctl"><label>False-alarm rate P(alert | clear)</label><output id="o-panb"></output><input type="range" id="p_a_nb" min="0.01" max="0.5" step="0.01"></div>
+      <div class="bars">
+        <div class="bar"><span>Prior</span><div class="track"><div class="fill" id="b-prior" style="background:#b9b4aa"></div></div><output id="v-prior"></output></div>
+        <div class="bar"><span>Posterior</span><div class="track"><div class="fill" id="b-post" style="background:var(--alert)"></div></div><output id="v-post"></output></div>
+      </div>
+      <div class="formula" id="b-f"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="n">3</span>MDP — Continue or Reroute?</h2>
+      <div class="ctl"><label>Minutes lost waiting in a jam</label><output id="o-jam"></output><input type="range" id="jam_wait" min="0" max="40" step="1"></div>
+      <div class="ctl"><label>Discount γ (weight of the next delivery)</label><output id="o-gamma"></output><input type="range" id="gamma" min="0" max="0.99" step="0.01"></div>
+      <table id="qtab"></table>
+      <div class="thresh" id="thresh"></div>
+      <div class="thresh-l"><span>P(blocked) = 0</span><span id="th-l"></span><span>1</span></div>
+      <div class="formula" id="m-f"></div>
+      <div class="note" id="m-note"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let D = null;            // defaults from server
+let map = [];            // array of arrays of chars
+let sensor = null;       // [r,c] or null
+let tool = "sensor";
+let last = null;         // last solve result
+let anim = null;
+
+const SCEN = {
+  rush:  { alert: true,  prior: 0.20 },
+  quiet: { alert: false, prior: 0.20 },
+  night: { alert: true,  prior: 0.03 },
+};
+
+function params() {
+  return {
+    map: map.map(r => r.join("")),
+    alert: $("alert").checked,
+    prior: +$("prior").value, p_a_b: +$("p_a_b").value, p_a_nb: +$("p_a_nb").value,
+    jam_wait: +$("jam_wait").value, gamma: +$("gamma").value,
+    alert_cell: sensor,
+  };
+}
+
+async function solve() {
+  stopAnim();
+  const res = await fetch("/api/solve", { method: "POST", body: JSON.stringify(params()) });
+  last = await res.json();
+  if (last.alert_cell) sensor = last.alert_cell;
+  render();
+}
+
+const key = (r, c) => r + "," + c;
+const pct = x => (100 * x).toFixed(1) + "%";
+const f2 = x => x.toFixed(2);
+
+function drawGrid(exploredUpTo) {
+  const g = $("grid");
+  g.style.gridTemplateColumns = `repeat(${map[0].length}, 1fr)`;
+  g.innerHTML = "";
+  const R = last && !last.error ? last : null;
+  const route = new Set((R?.path || []).map(p => key(...p)));
+  const fin = new Set((R?.final_path || []).map(p => key(...p)));
+  const order = {};
+  (last?.trace || []).slice(0, exploredUpTo ?? Infinity).forEach((t, i) => order[key(...t[0])] = i + 1);
+  const avoided = R && R.action === "Reroute";
+  const showRoutes = exploredUpTo === undefined;
+
+  map.forEach((row, r) => row.forEach((ch, c) => {
+    const el = document.createElement("div");
+    const k = key(r, c);
+    el.className = "cell " + ({ "#": "bldg", "~": "alley" }[ch] || "road");
+    if (order[k] && ch !== "#") el.classList.add("explored");
+    if (showRoutes && route.has(k) && !"SC".includes(ch)) el.classList.add("route");
+    if (showRoutes && fin.has(k) && !"SC".includes(ch)) el.classList.add("final");
+    if (R && sensor && k === key(...sensor)) {
+      el.classList.add("alertcell");
+      if (avoided) el.classList.add("avoided");
+    }
+    el.innerHTML = (order[k] ? `<span class="ord">${order[k]}</span>` : "") + '<span class="dot"></span>' +
+      (ch === "S" ? '<span class="lbl">🍔</span>' : ch === "C" ? '<span class="lbl">🏠</span>' : "");
+    el.title = `(${r}, ${c})` + (order[k] ? ` · A* expansion #${order[k]}` : "");
+    el.onclick = () => clickCell(r, c);
+    g.appendChild(el);
+  }));
+}
+
+function clickCell(r, c) {
+  if (tool === "sensor") {
+    const inner = (last?.path || []).slice(1, -1).map(p => key(...p));
+    if (!inner.includes(key(r, c))) { flash("Put the sensor on a cell of the first (blue) route."); return; }
+    sensor = [r, c];
+  } else {
+    if (tool === "S" || tool === "C") map.forEach(row => row.forEach((ch, j, a) => { if (ch === tool) a[j] = "."; }));
+    if ("SC".includes(map[r][c]) && !"SC".includes(tool)) { flash("Move the restaurant/customer with their own tools."); return; }
+    map[r][c] = tool;
+    sensor = null;               // route changed: let the server pick the sensor cell again
+  }
+  solve();
+}
+
+function flash(msg) { $("m-note").textContent = msg; $("m-note").style.color = "var(--alert)";
+  setTimeout(() => { $("m-note").style.color = ""; renderNote(); }, 2200); }
+
+function renderNote() {
+  if (!last || last.error) return;
+  $("m-note").textContent = last.note || "Tip: drag the prior or the false-alarm slider and watch the decision flip at the break-even line.";
+}
+
+function render() {
+  ["prior", "p_a_b", "p_a_nb"].forEach(id => $("o-" + ({ prior: "prior", p_a_b: "pab", p_a_nb: "panb" })[id]).textContent = (+$(id).value).toFixed(2));
+  $("o-jam").textContent = $("jam_wait").value + " min";
+  $("o-gamma").textContent = (+$("gamma").value).toFixed(2);
+  $("sw").classList.toggle("offs", !$("alert").checked);
+  $("swtxt").textContent = $("alert").checked ? "Traffic alert received from the sensor" : "Sensor is silent (no alert)";
+
+  drawGrid();
+  const R = last;
+  const b = $("banner");
+  if (!R || R.error) {
+    b.className = "error";
+    b.innerHTML = `<div><div class="big">No plan</div><div class="sub">${R?.error || ""}</div></div>`;
+    ["a-cost", "a-moves", "a-exp"].forEach(id => $(id).textContent = "–");
+    ["a-f", "b-f", "m-f"].forEach(id => $(id).textContent = "");
+    $("qtab").innerHTML = ""; $("thresh").innerHTML = "";
+    return;
+  }
+
+  // banner
+  const finalCost = R.action === "Reroute" ? R.detour_cost : R.cost;
+  b.className = R.action.toLowerCase();
+  b.innerHTML = `<div><div class="sub">Recommended action</div><div class="big">${R.action === "Reroute" ? "↪ REROUTE" : "→ CONTINUE"}</div>
+    <div class="sub">${R.action === "Reroute" ? "Take the A* detour around the suspect road" : "Keep the original fastest route"}</div></div>
+    <div class="stats"><div><b>${pct(R.posterior)}</b>P(blocked)</div><div><b>${finalCost} min</b>planned route</div></div>`;
+
+  // A*
+  $("a-cost").textContent = R.cost;
+  $("a-moves").textContent = R.path.length - 1;
+  $("a-exp").textContent = R.expanded;
+  $("a-f").innerHTML = `f(n) = g(n) + h(n),  h = |Δrow| + |Δcol|  (admissible: every move ≥ 1 min)<br>` +
+    `Start ${fmt(R.start)} → goal ${fmt(R.goal)}: h = ${R.trace[0][2]}, optimal cost = ${R.cost} min` +
+    (R.detour_cost != null ? `<br>Detour avoiding ${fmt(R.alert_cell)}: ${R.detour_cost} min (+${R.detour_cost - R.cost})` : "");
+
+  // Bayes
+  $("b-prior").style.width = pct(R.prior); $("v-prior").textContent = pct(R.prior);
+  $("b-post").style.width = pct(R.posterior); $("v-post").textContent = pct(R.posterior);
+  const obs = R.alert ? "alert" : "no alert";
+  $("b-f").innerHTML = `Sensor at ${fmt(R.alert_cell)}, observation = <b>${obs}</b><br>` +
+    `P(${obs}) = ${f2(R.like_b)}·${f2(R.prior)} + ${f2(R.like_nb)}·${f2(1 - R.prior)} = ${R.evidence.toFixed(3)}<br>` +
+    `P(blocked | ${obs}) = ${f2(R.like_b)}·${f2(R.prior)} / ${R.evidence.toFixed(3)} = <b>${R.posterior.toFixed(3)}</b>`;
+
+  // MDP
+  if (!R.Q) {
+    $("qtab").innerHTML = ""; $("thresh").innerHTML = ""; $("th-l").textContent = "";
+    $("m-f").innerHTML = "No detour exists, so there is nothing to compare.";
+    renderNote(); return;
+  }
+  const Q = R.Q, qb = R.qb, win = R.action;
+  $("qtab").innerHTML = `<tr><th>Q(s, a)</th><th>Continue</th><th>Reroute</th></tr>
+    <tr><td>Clear  (R: ${R.R.Clear.Continue} / ${R.R.Clear.Reroute})</td><td>${f2(Q.Clear.Continue)}</td><td>${f2(Q.Clear.Reroute)}</td></tr>
+    <tr><td>Blocked (R: ${R.R.Blocked.Continue} / ${R.R.Blocked.Reroute})</td><td>${f2(Q.Blocked.Continue)}</td><td>${f2(Q.Blocked.Reroute)}</td></tr>
+    <tr class="best"><td>E[Q] with P(blocked) = ${R.posterior.toFixed(3)}</td>
+      <td class="${win === "Continue" ? "win" : ""}">${f2(qb.Continue)}</td><td class="${win === "Reroute" ? "win" : ""}">${f2(qb.Reroute)}</td></tr>`;
+  const be = R.break_even;
+  $("thresh").innerHTML = `<div class="zone" style="left:0;width:${be * 100}%;background:#cfe0ff"></div>
+    <div class="zone" style="left:${be * 100}%;width:${(1 - be) * 100}%;background:#c9eedd"></div>
+    <div class="mark" style="left:calc(${R.posterior * 100}% - 1px)"><span>you: ${pct(R.posterior)}</span></div>`;
+  $("th-l").textContent = `Continue ◀ break-even ${be.toFixed(3)} ▶ Reroute`;
+  $("m-f").innerHTML = `V0(s) = max_a R(s,a): V0(Clear) = ${R.V0.Clear}, V0(Blocked) = ${R.V0.Blocked}<br>` +
+    `Q(s,a) = R(s,a) + ${f2(R.gamma)} · Σ T(s'|s,a)·V0(s')   (one Bellman update)<br>` +
+    `E[Q(a)] = (1−p)·Q(Clear,a) + p·Q(Blocked,a)  →  pick the larger: <b>${win}</b>`;
+  renderNote();
+}
+
+const fmt = p => `(${p[0]}, ${p[1]})`;
+
+function stopAnim() { if (anim) { clearInterval(anim); anim = null; } }
+function animate() {
+  if (!last?.trace) return;
+  stopAnim();
+  let i = 0;
+  anim = setInterval(() => {
+    i++;
+    drawGrid(i);
+    if (i >= last.trace.length) { stopAnim(); setTimeout(() => drawGrid(), 600); }
+  }, 260);
+}
+
+function setScenario(s) {
+  $("alert").checked = SCEN[s].alert;
+  $("prior").value = SCEN[s].prior;
+  solve();
+}
+
+async function init() {
+  D = await (await fetch("/api/defaults")).json();
+  map = D.map.map(r => r.split(""));
+  sensor = null;
+  ["prior", "p_a_b", "p_a_nb", "jam_wait", "gamma"].forEach(id => $(id).value = D[id]);
+  $("alert").checked = true;
+  solve();
+}
+
+document.querySelectorAll("#tools button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tools button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); tool = b.dataset.t;
+});
+document.querySelectorAll("[data-s]").forEach(b => b.onclick = () => setScenario(b.dataset.s));
+["prior", "p_a_b", "p_a_nb", "jam_wait", "gamma"].forEach(id => $(id).oninput = solve);
+$("alert").onchange = solve;
+$("animate").onclick = animate;
+$("reset").onclick = init;
+init();
+</script>
+</body>
+</html>
