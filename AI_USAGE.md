@@ -19,7 +19,6 @@
 - Recomputed the key numbers by hand: the Bayes posterior 0.18 / 0.30 = 0.60, and the Bellman values, for example Q(Blocked, Continue) = −25 + 0.9·(0.3·(−10) + 0.7·(−14)) = −36.52.
 - Studied every algorithm in the project so I can explain it and answer questions at the defense.
 - Prepared and recorded the demo video and the presentation.
-- *[Add anything else you changed yourself: map, numbers, design, etc.]*
 
 ## Verification
 All formulas shown in the UI and the README are checked against hand calculations and covered by 20 automated tests. All probabilities, rewards and maps are hypothetical toy values, as the assignment allows.
